@@ -4,8 +4,10 @@ Only the probability of the first answer token is used ("Yes" vs "No"), so one c
 forward pass. The model never sees anything outside this machine.
 """
 
+import json
 import logging
 import threading
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -21,10 +23,12 @@ class YesNoVLM:
         self.device = device if torch.cuda.is_available() else "cpu"
         self.proc = AutoProcessor.from_pretrained(model_dir)
         kw = {"dtype": torch.bfloat16}
+        prequantized = "quantization_config" in json.loads((Path(model_dir) / "config.json").read_text(encoding="utf-8"))
         if self.device.startswith("cuda"):
             kw["device_map"] = self.device
-            kw["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)
+            if not prequantized:  # quantize on load; a pre-quantized folder carries its own 4-bit config
+                kw["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)
         self.model = AutoModelForImageTextToText.from_pretrained(model_dir, **kw).eval()
         tok = self.proc.tokenizer
         self.yes_ids = sorted({tok.encode(w, add_special_tokens=False)[0] for w in ("Yes", "yes", " Yes", " yes")})

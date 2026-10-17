@@ -12,8 +12,9 @@ python -m venv .venv
 .\.venv\Scripts\pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 .\.venv\Scripts\pip install -r requirements.txt
 
-# 2. веса моделей (~9 ГБ, один раз)
+# 2. веса моделей (~9 ГБ, один раз) и 4-битная копия VLM (3 ГБ: запуск без пика памяти 8–9 ГБ)
 .\.venv\Scripts\python scripts\download_models.py
+.\.venv\Scripts\python scripts\quantize_vlm.py
 
 # 3. ключ API для жюри
 copy .env.example .env      # затем впишите свой ключ в API_KEYS

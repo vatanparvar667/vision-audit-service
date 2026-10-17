@@ -44,7 +44,10 @@ def get_vlm():
             return None
         from app.pipeline.vlm import YesNoVLM
 
-        path = settings.models_dir / "Qwen3-VL-4B-Instruct"
+        # pre-quantized copy (scripts/quantize_vlm.py) loads without reading the 8.9 GB bf16 weights into RAM
+        path = settings.models_dir / "Qwen3-VL-4B-Instruct-bnb4"
+        if not path.exists():
+            path = settings.models_dir / "Qwen3-VL-4B-Instruct"
         try:
             if not path.exists():
                 raise FileNotFoundError(f"VLM folder {path} not found")
