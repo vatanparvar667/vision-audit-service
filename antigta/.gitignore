@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+uploads/
+inspection_frames/
+violation_clips/
+*.mp4
+*.mov
+*.avi
+*.mkv
+test_qwen_script.py
