@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from app.pipeline.perception import Det, overlap_frac
+from app.pipeline.perception import Det, iou, overlap_frac
 from app.pipeline.scene import Layout, Track, on_desk
 
 
@@ -127,6 +127,20 @@ def rule_left_unattended(tl: Timeline) -> list[Event]:
                 if d.label not in found or d.score > found[d.label].score:
                     found[d.label] = d
                     seen_at = i
+        if not found:
+            # weaker evidence: an object seen on the desk just before the exit stays at the same place
+            # while the room is empty (OWLv2 may change its label between frames: bag -> document)
+            fps = _fps(tl)
+            before = [d for i in range(max(0, a - int(3 * fps)), a) if i in tl.owl
+                      for d in desk_items(tl, i)]
+            during = [(i, d) for i in range(a, b + 1) if i in tl.owl for d in tl.owl[i]
+                      if d.label in ("cash", "bag", "document") and d.score >= 0.2 and on_desk(d.box, tl.layout.desk, 0.6)]
+            for p in sorted(before, key=lambda d: -d.score):
+                same = [(i, d) for i, d in during if iou(p.box, d.box) > 0.5]
+                if same:
+                    found[p.label] = p
+                    seen_at = same[0][0]
+                    break
         kinds = sorted(found)
         # always ask the verifier about the desk: closed booklets, cash bags etc. are often missed by OWLv2
         events.append(Event(

@@ -125,6 +125,13 @@ python scripts/api_client.py https://<адрес> <ключ> video_017.mov   # �
 `interpretation` с объяснением. Утратившие силу акты (НБРК № 58 от 2001 г., № 250 и № 254 от 2012 г.,
 НБРК № 48 от 2018 г.) не используются, хотя их тексты ещё встречаются в поиске.
 
+## Тесты
+
+```bash
+pip install -r requirements-dev.txt
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests   # контракт API, без GPU
+```
+
 ## Качество на обучающем датасете
 
 `scripts/build_cache.py` считает детекции один раз, `scripts/eval.py --vlm` сравнивает с разметкой
