@@ -1,0 +1,14 @@
+# PyTorch with CUDA: install first from the PyTorch index, e.g.
+#   pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+torch>=2.4
+torchvision>=0.19
+transformers>=4.57          # Qwen3-VL, RT-DETRv2, OWLv2
+accelerate>=1.0
+bitsandbytes>=0.45          # 4-bit loading of the VLM on 6 GB GPUs
+huggingface_hub>=0.30       # only for scripts/download_models.py
+opencv-python>=4.7
+pillow>=10
+numpy>=1.26
+fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.9

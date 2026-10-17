@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Проверка кассовой видеозаписи</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="masthead">
+    <div class="masthead__title">
+      <h1>Проверка кассовой видеозаписи</h1>
+      <p>Сервис ищет на записи признаки нарушений кассовой дисциплины и показывает момент, кадры и норму. Анализ выполняется локально, без облачных сервисов. Результат — подсказка для проверяющего, а не заключение.</p>
+    </div>
+    <button class="btn btn--quiet" id="resetBtn" type="button" hidden>Проверить другое видео</button>
+  </header>
+
+  <main class="desk">
+    <section class="evidence" aria-label="Видеозапись">
+      <label class="drop" id="drop" for="fileInput">
+        <input id="fileInput" type="file" accept=".mov,.mp4,.m4v,video/quicktime,video/mp4" hidden>
+        <span class="drop__icon" aria-hidden="true">
+          <svg viewBox="0 0 48 48" width="48" height="48"><rect x="6" y="10" width="28" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M34 20l9-5v18l-9-5z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/></svg>
+        </span>
+        <span class="drop__lead">Перетащите видеозапись сюда</span>
+        <span class="drop__hint">или <span class="drop__link">выберите файл</span> — .mov, до 500 МБ</span>
+      </label>
+
+      <div class="player" id="player" hidden>
+        <video id="video" controls playsinline preload="metadata"></video>
+        <div class="timeline" id="timeline" aria-label="Моменты нарушений на шкале времени">
+          <div class="timeline__track">
+            <div class="timeline__played" id="played"></div>
+            <div class="timeline__marks" id="marks"></div>
+          </div>
+          <div class="timeline__scale"><span>0:00</span><span id="durLabel"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="report" aria-live="polite">
+      <div class="state" id="stateIdle">
+        <h2>Что проверяет сервис</h2>
+        <p class="muted">Загрузите запись с камеры над кассой. Через одну–три минуты появится вердикт, а для каждого найденного момента — время, кадры, описание и ссылка на норму.</p>
+        <ul class="types" id="typesList"></ul>
+      </div>
+
+      <div class="state" id="stateWork" hidden>
+        <p class="work__file" id="workFile"></p>
+        <div class="meter" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="meter">
+          <div class="meter__fill" id="meterFill"></div>
+        </div>
+        <p class="work__stage" id="workStage">Загрузка видео…</p>
+      </div>
+
+      <div class="state" id="stateFail" hidden>
+        <h2>Видео не обработано</h2>
+        <p id="failText" class="muted"></p>
+        <button class="btn" type="button" id="retryBtn">Выбрать другой файл</button>
+      </div>
+
+      <div class="state" id="stateDone" hidden>
+        <div class="verdict">
+          <div class="stamp" id="stamp"><span id="stampText"></span></div>
+          <dl class="verdict__meta" id="verdictMeta"></dl>
+        </div>
+        <p class="verdict__note" id="verdictNote"></p>
+        <ol class="findings" id="findings"></ol>
+      </div>
+    </section>
+  </main>
+
+  <dialog class="lightbox" id="lightbox">
+    <form method="dialog"><button class="lightbox__close" aria-label="Закрыть">×</button></form>
+    <img id="lightboxImg" alt="">
+    <p id="lightboxCap"></p>
+  </dialog>
+
+  <template id="findingTpl">
+    <li class="finding">
+      <div class="finding__head">
+        <button class="tc" type="button"></button>
+        <h3 class="finding__type"></h3>
+        <span class="finding__conf"></span>
+      </div>
+      <div class="frames"></div>
+      <p class="finding__desc"></p>
+      <div class="norm">
+        <p class="norm__ref"></p>
+        <blockquote class="norm__quote"></blockquote>
+      </div>
+    </li>
+  </template>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
