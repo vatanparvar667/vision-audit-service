@@ -148,12 +148,17 @@ async def get_job_status(
         }
     else:
         # status == "done"
-        return {
+        response_data = {
             "job_id": job_id,
             "status": "done",
             "verdict": job.get("verdict", "no_violation"),
             "violations": job.get("violations", [])
         }
+        if "processing_time_sec" in job and job["processing_time_sec"] is not None:
+            response_data["processing_time_sec"] = job["processing_time_sec"]
+        if "video_duration_sec" in job and job["video_duration_sec"] is not None:
+            response_data["video_duration_sec"] = job["video_duration_sec"]
+        return response_data
 
 @app.post("/api/v1/analyze_preset")
 async def analyze_preset_video(
