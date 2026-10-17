@@ -19,6 +19,7 @@ log = logging.getLogger("analyze")
 
 COCO_FPS = 4.0
 OWL_EVERY_S = 1.0
+USE_DESK_PASS = False  # second OWLv2 pass on the desk crop: no gain on the dataset, one extra false positive
 SAFE_EVERY_S = 2.0
 
 _models: dict = {}
@@ -59,9 +60,24 @@ def perceive(clip: VideoClip, progress=None) -> dict:
     per = get_perception()
     coco = per.detect_coco(clip, progress=(lambda f: progress(0.15 + 0.35 * f, "detecting")) if progress else None)
     step = max(1, int(round(clip.sample_fps * OWL_EVERY_S)))
-    owl = per.detect_owl(clip, list(range(0, len(clip.samples), step)),
-                         progress=(lambda f: progress(0.5 + 0.2 * f, "detecting")) if progress else None)
+    idx = list(range(0, len(clip.samples), step))
+    owl = per.detect_owl(clip, idx, progress=(lambda f: progress(0.5 + 0.1 * f, "detecting")) if progress else None)
+    if USE_DESK_PASS:
+        owl = add_desk_pass(clip, coco, owl, idx, progress)
     return {"coco": coco, "owl": owl}
+
+
+def add_desk_pass(clip: VideoClip, coco, owl, idx, progress=None):
+    """Second OWLv2 pass on the enlarged desk region: banknote bundles are only ~15-30 px in the full frame."""
+    from app.pipeline.perception import desk_crop_box, merge_owl
+
+    desk = estimate_layout(clip, coco, owl, []).desk
+    crop = desk_crop_box(desk, clip.width, clip.height)
+    if crop is None:
+        return owl
+    extra = get_perception().detect_owl(clip, idx, crop=crop,
+                                        progress=(lambda f: progress(0.6 + 0.1 * f, "detecting")) if progress else None)
+    return merge_owl(owl, extra)
 
 
 def build_timeline(clip: VideoClip, coco, owl) -> R.Timeline:

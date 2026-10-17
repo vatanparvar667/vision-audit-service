@@ -184,19 +184,21 @@ def rule_left_unattended(tl: Timeline) -> list[Event]:
 # ---------------------------------------------------------------------------------------------
 
 def rule_food_drink(tl: Timeline) -> list[Event]:
+    # a real cup/bottle must be clearly visible at some point (banknotes or cards at the face are not drinks)
+    best_cup = max((d.score for f in tl.coco for d in f if d.label in ("cup", "bottle", "wine glass")), default=0.0)
+    if best_cup < 0.6:
+        return []
     hits = []
     for i, frame in enumerate(tl.coco):
-        cups = [d for d in frame if d.label in ("cup", "bottle", "wine glass") and d.score >= 0.45]
+        cups = [d for d in frame if d.label in ("cup", "bottle", "wine glass") and d.score >= 0.35]
         if not cups:
             continue
-        for tr in tl.tracks:
-            if i not in tr.boxes:
-                continue
-            x0, y0, x1, y1 = tr.boxes[i]
-            face_y = y0 + 0.38 * (y1 - y0)
+        for person in tl.people[i]:
+            x0, y0, x1, y1 = person.box
+            face_y = y0 + 0.45 * (y1 - y0)
             for c in cups:
                 if x0 - 5 <= c.cx <= x1 + 5 and y0 - 10 <= c.cy <= face_y:
-                    hits.append((i, c, tr.boxes[i]))
+                    hits.append((i, c, person.box))
     if not hits:
         return []
     events = []
@@ -347,13 +349,22 @@ def rule_safe_open(tl: Timeline, safe_p: dict[int, float]) -> list[Event]:
         ka, kb = keys[a], keys[b]
         if tl.t[kb] - tl.t[ka] < 4.0:
             continue
-        # cashier seated (box clearly lower than her standing height) or room empty while the safe is open
+        # cashier away from the safe: room empty, or she opened it standing and then sat down at the desk.
+        # A cashier who works at a safe within reach of her chair is seated the whole time: not a violation.
+        h_open = None
+        if cash:
+            near_open = [k for k in sorted(cash.boxes) if abs(k - ka) <= int(2 * _fps(tl))]
+            if near_open:
+                b0 = cash.boxes[min(near_open, key=lambda k: abs(k - ka))]
+                h_open = b0[3] - b0[1]
         away = []
         for k in keys[a:b + 1]:
             if tl.occ[k] == 0:
                 away.append(k)
-            elif cash and k in cash.boxes and (cash.boxes[k][3] - cash.boxes[k][1]) < 0.75 * hmax:
-                away.append(k)
+            elif cash and k in cash.boxes and h_open is not None:
+                h = cash.boxes[k][3] - cash.boxes[k][1]
+                if h < 0.75 * h_open and h < 0.8 * hmax:
+                    away.append(k)
         if len(away) < 2 or tl.t[away[-1]] - tl.t[away[0]] < 2.5:
             continue
         t_ev = float(tl.t[away[0]])
@@ -365,6 +376,8 @@ def rule_safe_open(tl: Timeline, safe_p: dict[int, float]) -> list[Event]:
             boxes={t_ev: [("сейф", tl.layout.safe)]} if tl.layout.safe else {},
             facts={"open_for": float(tl.t[kb] - tl.t[ka]), "away_for": float(tl.t[away[-1]] - tl.t[away[0]]),
                    "empty_room": any(tl.occ[k] == 0 for k in away)},
+            verify=[(float(tl.t[mid]), None, "Is the metal safe standing open while nobody is standing at it "
+                                             "(the person is sitting at the desk or away from the safe)?")],
         ))
     return events
 
@@ -445,7 +458,7 @@ def rule_client_cash(tl: Timeline) -> list[Event]:
 def rule_second_visitor(tl: Timeline) -> list[Event]:
     events = []
     for a, b in runs(tl.occ >= 3):
-        if tl.t[b] - tl.t[a] < 2.5:
+        if tl.t[b] - tl.t[a] < 4.0:
             continue
         # report the moment the extra person is already at the desk, not the moment they walk in
         t_ev = float(tl.t[a]) + min(4.0, float(tl.t[b] - tl.t[a]) / 2)
@@ -466,8 +479,10 @@ def rule_bag_handover(tl: Timeline) -> list[Event]:
     events = []
     exits = visitor_exits(tl)
     for e, _ in visitor_entries(tl):
+        if tl.occ[e - 1] != 1:
+            continue
         later = [k for k, _ in exits if k > e]
-        if not later:
+        if not later or tl.occ[later[0]] != 1:
             continue
         k = later[0]
         stay = float(tl.t[k] - tl.t[e])

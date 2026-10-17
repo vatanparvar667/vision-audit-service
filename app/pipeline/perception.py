@@ -32,6 +32,24 @@ OWL_QUERIES = {
 }
 
 
+# concepts re-checked on the enlarged desk crop (small objects the full-frame pass misses)
+CROP_CONCEPTS = ["cash", "bag", "document", "cup", "clothes", "phone"]
+
+
+def merge_owl(a: dict, b: dict) -> dict:
+    """Union of two OWLv2 passes per sample; overlapping boxes of one concept keep the higher score."""
+    return {i: nms_by_label(a.get(i, []) + b.get(i, []), iou_thr=0.5) for i in set(a) | set(b)}
+
+
+def desk_crop_box(desk, width: int, height: int):
+    """Desk region plus room above it (cash held over the desk), slightly wider than the desk."""
+    if desk is None:
+        return None
+    x0, y0, x1, y1 = desk
+    w, h = x1 - x0, y1 - y0
+    return (max(0.0, x0 - 0.08 * w), max(0.0, y0 - 0.45 * h), min(float(width), x1 + 0.08 * w), min(float(height), y1))
+
+
 @dataclass
 class Det:
     label: str
@@ -72,6 +90,10 @@ class Perception:
         self._owl_texts = [q for qs in OWL_QUERIES.values() for q in qs]
         self._owl_concept = [c for c, qs in OWL_QUERIES.items() for _ in qs]
         self._owl_text_inputs = self.owl_proc(text=[self._owl_texts], return_tensors="pt").to(self.device)
+        # second pass on an enlarged crop of the desk: small objects only
+        self._crop_texts = [q for c in CROP_CONCEPTS for q in OWL_QUERIES[c]]
+        self._crop_concept = [c for c in CROP_CONCEPTS for _ in OWL_QUERIES[c]]
+        self._crop_text_inputs = self.owl_proc(text=[self._crop_texts], return_tensors="pt").to(self.device)
 
     @torch.inference_mode()
     def detect_coco(self, clip: VideoClip, threshold: float = 0.3, batch: int = 8, progress=None) -> list[list[Det]]:
@@ -97,27 +119,36 @@ class Perception:
         return out_all
 
     @torch.inference_mode()
-    def detect_owl(self, clip: VideoClip, indices: list[int], threshold: float = 0.12, progress=None) -> dict[int, list[Det]]:
-        """OWLv2 on selected samples. Returns concept-level detections (merged across phrasings, NMS by concept)."""
+    def detect_owl(self, clip: VideoClip, indices: list[int], threshold: float = 0.12, progress=None,
+                   crop: tuple | None = None) -> dict[int, list[Det]]:
+        """OWLv2 on selected samples. Returns concept-level detections (merged across phrasings, NMS by concept).
+        With `crop` (full-frame box) only that region is analysed, enlarged to the model input, and only the
+        small-object concepts are queried; boxes are returned in full-frame coordinates."""
         H, W = clip.height, clip.width
-        S = max(H, W)  # OWLv2 pads to a square; boxes come back in padded coordinates
+        if crop is not None:
+            cx0, cy0 = max(0, int(crop[0])), max(0, int(crop[1]))
+            cx1, cy1 = min(W, int(crop[2])), min(H, int(crop[3]))
+            texts, concepts = self._crop_text_inputs, self._crop_concept
+        else:
+            cx0, cy0, cx1, cy1 = 0, 0, W, H
+            texts, concepts = self._owl_text_inputs, self._owl_concept
+        S = max(cx1 - cx0, cy1 - cy0)  # OWLv2 pads to a square; boxes come back in padded coordinates
         result: dict[int, list[Det]] = {}
         for k, i in enumerate(indices):
-            img = Image.fromarray(clip.rgb(i))
+            img = Image.fromarray(clip.rgb(i)[cy0:cy1, cx0:cx1])
             px = self.owl_proc(images=img, return_tensors="pt")["pixel_values"].to(self.device, self.dtype)
-            out = self.owl(input_ids=self._owl_text_inputs["input_ids"],
-                           attention_mask=self._owl_text_inputs["attention_mask"], pixel_values=px)
+            out = self.owl(input_ids=texts["input_ids"], attention_mask=texts["attention_mask"], pixel_values=px)
             out.logits = out.logits.float()
             out.pred_boxes = out.pred_boxes.float()
             r = self.owl_proc.post_process_grounded_object_detection(
                 out, threshold=threshold, target_sizes=torch.tensor([[S, S]], device=self.device))[0]
             dets = []
-            for s, l, bx in zip(r["scores"].tolist(), r["labels"].tolist(), r["boxes"].tolist()):
-                x0, y0, x1, y1 = bx
-                box = (max(0.0, x0), max(0.0, y0), min(float(W), x1), min(float(H), y1))
+            for sc, lb, bx in zip(r["scores"].tolist(), r["labels"].tolist(), r["boxes"].tolist()):
+                x0, y0, x1, y1 = bx[0] + cx0, bx[1] + cy0, bx[2] + cx0, bx[3] + cy0
+                box = (max(float(cx0), x0), max(float(cy0), y0), min(float(cx1), x1), min(float(cy1), y1))
                 if box[2] - box[0] < 2 or box[3] - box[1] < 2:
                     continue
-                dets.append(Det(self._owl_concept[l], float(s), box))
+                dets.append(Det(concepts[lb], float(sc), box))
             result[i] = nms_by_label(dets, iou_thr=0.5)
             if progress:
                 progress((k + 1) / len(indices))
