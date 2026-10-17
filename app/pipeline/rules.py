@@ -202,6 +202,13 @@ def rule_food_drink(tl: Timeline) -> list[Event]:
         best = max((h for h in hits if h[0] in g), key=lambda h: h[1].score)
         i, cup, pbox = best
         t0 = float(tl.t[g[0]])
+        # the episode starts when the cup is first in the person's hands, a few seconds before it reaches the face
+        for j in range(g[0] - 1, max(-1, g[0] - int(6 * _fps(tl))), -1):
+            near = [c for c in tl.coco[j] if c.label in ("cup", "bottle", "wine glass") and c.score >= 0.35
+                    and pbox[0] - 10 <= c.cx <= pbox[2] + 10 and pbox[1] - 10 <= c.cy <= pbox[3] + 10]
+            if not near:
+                break
+            t0 = float(tl.t[j])
         events.append(Event(
             type="food_drink", t=t0, t_start=t0, t_end=float(tl.t[g[-1]]), score=0.45 + 0.1 * cup.score,
             evidence_t=[float(tl.t[i])], boxes={float(tl.t[i]): [("напиток", cup.box)]},
@@ -426,12 +433,13 @@ def rule_second_visitor(tl: Timeline) -> list[Event]:
     for a, b in runs(tl.occ >= 3):
         if tl.t[b] - tl.t[a] < 2.5:
             continue
-        t_ev = float(tl.t[a])
+        # report the moment the extra person is already at the desk, not the moment they walk in
+        t_ev = float(tl.t[a]) + min(4.0, float(tl.t[b] - tl.t[a]) / 2)
         mid = (a + b) // 2
         events.append(Event(
-            type="second_visitor", t=t_ev, t_start=t_ev, t_end=float(tl.t[b]), score=0.6,
+            type="second_visitor", t=t_ev, t_start=float(tl.t[a]), t_end=float(tl.t[b]), score=0.6,
             evidence_t=[t_ev, float(tl.t[mid])],
-            boxes={t_ev: [("человек", d.box) for d in tl.people[a]]},
+            boxes={t_ev: [("человек", d.box) for d in tl.people[tl.idx(t_ev)]]},
             facts={"people": int(tl.occ[a:b + 1].max()), "duration": float(tl.t[b] - tl.t[a])},
             verify=[(float(tl.t[mid]), None, "Are there at least three people inside this room (not counting people "
                                              "seen through the glass wall or reflections)?")],
