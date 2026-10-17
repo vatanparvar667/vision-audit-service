@@ -112,7 +112,7 @@ def rule_left_unattended(tl: Timeline) -> list[Event]:
         if a == 0 or tl.t[b] - tl.t[a] < 0.7:
             continue
         t_exit = float(tl.t[a])
-        t_ev = max(0.0, t_exit - 2.5)
+        t_ev = max(0.0, t_exit - 4.0)  # head count drops ~2-3 s after the person walks out
         i_check = min(b, a + 2)
         found: dict[str, Det] = {}
         seen_at = i_check
@@ -132,7 +132,9 @@ def rule_left_unattended(tl: Timeline) -> list[Event]:
             boxes={float(tl.t[seen_at]): ([(label_ru[k], found[k].box) for k in kinds] or [("стол", tl.layout.desk)])},
             facts={"items": [label_ru[k] for k in kinds] or ["предметы, оставленные на столе"], "t_exit": t_exit,
                    "empty_for": float(tl.t[b] - tl.t[a])},
-            verify=([(float(tl.t[seen_at]), _grow(found[k].box, 6.0), ITEM_Q[k]) for k in kinds[:1]] if found else
+            # items found by OWLv2 are trusted (the VLM misreads banknote bundles at this resolution);
+            # without them the VLM is asked about the whole desk
+            verify=([] if found else
                     [(float(tl.t[seen_at]), tl.layout.desk,
                       "Nobody is at this desk. Are banknotes, a bag, documents, a booklet or other valuables left "
                       "lying on it (ignore the computer, the desk phone and the money counting machine)?")]),
@@ -401,7 +403,7 @@ def rule_client_cash(tl: Timeline) -> list[Event]:
                     boxes={float(tl.t[i_best]): [("наличные", d_best.box)],
                            t_ev: [("наличные", max(still, key=lambda d: d.score).box)]},
                     facts={"t_exit": t_exit, "t_next": t_ev},
-                    verify=[(float(tl.t[i_best]), _grow(d_best.box, 6.0), "Is there a stack of banknotes (paper money) in this picture?")],
+                    verify=[],  # OWLv2 banknote detections are persistent over seconds; no VLM veto
                 ))
                 continue
         events.append(Event(
@@ -410,7 +412,7 @@ def rule_client_cash(tl: Timeline) -> list[Event]:
             evidence_t=[t_exit, float(tl.t[i_best])],
             boxes={float(tl.t[i_best]): [("наличные", d_best.box)]},
             facts={"t_exit": t_exit},
-            verify=[(float(tl.t[i_best]), _grow(d_best.box, 6.0), "Is there a stack of banknotes (paper money) in this picture?")],
+            verify=[],
         ))
     return events
 

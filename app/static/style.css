@@ -173,6 +173,7 @@ p { margin: 0; }
 .norm__ref { font-weight: 600; font-size: var(--step--1); }
 .norm__ref a { color: inherit; text-underline-offset: 3px; }
 .norm__quote { margin: 0.4rem 0 0; color: var(--ink-2); font-size: var(--step--1); }
+.norm__note { margin-top: 0.4rem; font-size: var(--step--1); color: var(--ink-2); font-style: italic; }
 
 /* ---- lightbox ---- */
 .lightbox { border: 0; padding: 1rem; border-radius: var(--radius-m); max-width: min(92vw, 720px); background: var(--sheet); }

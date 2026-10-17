@@ -11,7 +11,7 @@ from app.config import settings
 from app.pipeline import rules as R
 from app.pipeline.perception import Perception
 from app.pipeline.report import build_report
-from app.pipeline.scene import (brightness_series, estimate_layout, in_room_tracks, occupancy_changes,
+from app.pipeline.scene import (brightness_series, estimate_layout, in_room_tracks, occupancy_changes, person_scale,
                                 region_diff_series, rolling_median, room_people, screen_whiteness, track_people)
 from app.pipeline.video import VideoClip, read_video
 
@@ -40,7 +40,11 @@ def get_vlm():
             from app.pipeline.vlm import YesNoVLM
 
             path = settings.models_dir / "Qwen3-VL-4B-Instruct"
-            _models["vlm"] = YesNoVLM(path, settings.device) if path.exists() else None
+            try:
+                _models["vlm"] = YesNoVLM(path, settings.device) if path.exists() else None
+            except Exception as exc:  # e.g. not enough GPU memory: rules still work, unverified
+                log.error("VLM not loaded, continuing without verification: %s", exc)
+                _models["vlm"] = None
         return _models["vlm"]
 
 
@@ -61,8 +65,10 @@ def perceive(clip: VideoClip, progress=None) -> dict:
 
 
 def build_timeline(clip: VideoClip, coco, owl) -> R.Timeline:
-    tracks = in_room_tracks(track_people(coco, clip.height), clip.width, clip.height)
-    people = [room_people(f, clip.width, clip.height) for f in coco]
+    all_tracks = track_people(coco, clip.height)
+    scale = person_scale(all_tracks, clip.width, clip.height)
+    tracks = in_room_tracks(all_tracks, clip.width, clip.height)
+    people = [room_people(f, clip.width, clip.height, scale) for f in coco]
     occ = rolling_median(np.array([len(p) for p in people]), 7)
     entries, exits = occupancy_changes(people, occ)
     layout = estimate_layout(clip, coco, owl, tracks)

@@ -104,13 +104,30 @@ def in_room_tracks(tracks: list[Track], width: int, height: int, min_len: int = 
 ROOM_PERSON_SCORE = 0.75
 
 
-def room_people(frame: list[Det], width: int, height: int) -> list[Det]:
+def person_scale(tracks: list[Track], width: int, height: int) -> float:
+    """How large people look in this camera view compared with the dataset camera (cashier ~3% of the frame).
+    Used to adapt size thresholds when the camera is closer or further away."""
+    long = [t for t in tracks if len(t.boxes) >= 8 and t.peak() >= 0.85]
+    if not long:
+        return 1.0
+    main = max(long, key=lambda t: len(t.boxes))
+    area = float(np.median([(b[2] - b[0]) * (b[3] - b[1]) for b in main.boxes.values()])) / (width * height)
+    raw = area / 0.03
+    # the dataset views span 0.9..2.0 (cashier or a client nearer the camera); adapt only outside that range
+    if raw < 0.6:
+        return float(max(0.2, raw / 0.6))
+    if raw > 2.5:
+        return float(min(5.0, raw / 2.5))
+    return 1.0
+
+
+def room_people(frame: list[Det], width: int, height: int, scale: float = 1.0) -> list[Det]:
     """Confident person detections that are physically in the room (see in_room_tracks for the criterion)."""
     from app.pipeline.perception import nms_by_label
 
     out = []
     for p in nms_by_label([d for d in frame if d.label == "person" and d.score >= ROOM_PERSON_SCORE], 0.45):
-        a = p.w * p.h / (width * height)
+        a = p.w * p.h / (width * height) / scale
         if a >= 0.022 or (a >= 0.014 and p.box[3] / height >= 0.42):
             out.append(p)
     return out

@@ -174,7 +174,9 @@ function renderFinding(v, i) {
       a.href = norm.url; a.target = "_blank"; a.rel = "noopener"; a.textContent = label;
       ref.append(a);
     } else ref.textContent = label;
-    if (norm.quote) quote.textContent = norm.quote; else quote.remove();
+    if (norm.quote) quote.textContent = `«${norm.quote}»`; else quote.remove();
+    const note = node.querySelector(".norm__note");
+    if (norm.interpretation) note.textContent = `Толкование: ${norm.interpretation}`; else note.remove();
   } else node.querySelector(".norm").remove();
   return node;
 }
