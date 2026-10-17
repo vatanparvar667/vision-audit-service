@@ -81,11 +81,18 @@ p { margin: 0; }
 }
 .drop.is-over { border-color: var(--focus); color: var(--focus); }
 .drop__lead { font-size: var(--step-1); font-weight: 600; color: var(--ink); }
-.drop__link { text-decoration: underline; text-underline-offset: 3px; color: var(--ink); }
+.drop__link {
+  font: inherit; padding: 0; border: 0; background: none; cursor: pointer;
+  text-decoration: underline; text-underline-offset: 3px; color: var(--ink);
+}
 
 .player video {
   display: block; width: 100%; max-height: 78vh; border-radius: var(--radius-m);
   background: #000; aspect-ratio: 9 / 16; object-fit: contain;
+}
+.player__note {
+  margin-top: 0.75rem; padding: 0.6rem 0.8rem; font-size: var(--step--1); color: var(--ink-2);
+  background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius-s);
 }
 
 /* ---- timeline with violation marks ---- */
@@ -145,7 +152,7 @@ p { margin: 0; }
 }
 .verdict__meta { display: grid; grid-template-columns: auto auto; gap: 0.2rem 1rem; margin: 0; font-size: var(--step--1); }
 .verdict__meta dt { color: var(--ink-2); }
-.verdict__meta dd { margin: 0; font-weight: 500; }
+.verdict__meta dd { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
 .verdict__note { color: var(--ink-2); max-width: 70ch; }
 
 /* ---- findings ---- */

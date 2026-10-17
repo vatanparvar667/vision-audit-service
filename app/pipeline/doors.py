@@ -41,7 +41,8 @@ def door_change(clip: VideoClip, coco: list[list[Det]], k: int, fps: float,
     stack_masked = np.where(masks, np.nan, stack)
     with np.errstate(all="ignore"):
         ref = np.nanmedian(stack_masked, axis=0)
-    ref = np.where(np.isnan(ref), np.median(stack, axis=0), ref)
+    unknown = np.isnan(ref)  # occluded by people in every reference frame: the background there is unknown
+    ref = np.where(unknown, 0.0, ref)
 
     end = min(n, k + int(12 * fps)) if post_end is None else min(n, post_end)
     post = [i for i in range(k + int(2.5 * fps), end)]
@@ -54,7 +55,7 @@ def door_change(clip: VideoClip, coco: list[list[Det]], k: int, fps: float,
         d = np.abs(clip.samples[i].small.astype(np.float32) - ref) > DIFF_THR
         changed += (d & m)
         seen += m
-    ok = seen >= 0.5 * len(post)
+    ok = (seen >= 0.5 * len(post)) & ~unknown
     persist = np.zeros_like(ok)
     persist[ok] = changed[ok] / seen[ok] >= PERSIST
 

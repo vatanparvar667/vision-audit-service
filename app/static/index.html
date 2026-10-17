@@ -18,17 +18,18 @@
 
   <main class="desk">
     <section class="evidence" aria-label="Видеозапись">
-      <label class="drop" id="drop" for="fileInput">
-        <input id="fileInput" type="file" accept=".mov,.mp4,.m4v,video/quicktime,video/mp4" hidden>
+      <div class="drop" id="drop">
         <span class="drop__icon" aria-hidden="true">
           <svg viewBox="0 0 48 48" width="48" height="48"><rect x="6" y="10" width="28" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M34 20l9-5v18l-9-5z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/></svg>
         </span>
         <span class="drop__lead">Перетащите видеозапись сюда</span>
-        <span class="drop__hint">или <span class="drop__link">выберите файл</span> — .mov, до 500 МБ</span>
-      </label>
+        <span class="drop__hint">или <button class="drop__link" id="pickBtn" type="button">выберите файл</button> — .mov, до 500 МБ</span>
+      </div>
+      <input id="fileInput" type="file" accept=".mov,.mp4,.m4v,video/quicktime,video/mp4" hidden>
 
       <div class="player" id="player" hidden>
         <video id="video" controls playsinline preload="metadata"></video>
+        <p class="player__note" id="videoNote" hidden>Браузер не может воспроизвести этот файл. На анализ это не влияет: результат и кадры покажем в отчёте.</p>
         <div class="timeline" id="timeline" aria-label="Моменты нарушений на шкале времени">
           <div class="timeline__track">
             <div class="timeline__played" id="played"></div>

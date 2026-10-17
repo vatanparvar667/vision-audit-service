@@ -152,7 +152,7 @@ def rule_left_unattended(tl: Timeline) -> list[Event]:
                    "empty_for": float(tl.t[b] - tl.t[a])},
             # items found by OWLv2 are trusted (the VLM misreads banknote bundles at this resolution);
             # without them the VLM is asked about the whole desk
-            verify=([] if found else
+            verify=([] if set(found) - {"item"} else
                     [(float(tl.t[seen_at]), tl.layout.desk,
                       "Nobody is at this desk. Are banknotes, a bag, documents, a booklet or other valuables left "
                       "lying on it (ignore the computer, the desk phone and the money counting machine)?")]),
@@ -260,7 +260,7 @@ def rule_personal_items(tl: Timeline) -> list[Event]:
     i, d = max(hits, key=lambda h: h[1].score)
     t0 = float(tl.t[hits[0][0]])
     return [Event(
-        type="personal_items", t=t0, t_start=t0, t_end=float(tl.t[hits[-1][0]]), score=0.45 + 0.1 * d.score,
+        type="personal_items", t=t0, t_start=t0, t_end=float(tl.t[hits[-1][0]]), score=0.45,  # needs the VLM to pass
         evidence_t=[float(tl.t[i])], boxes={float(tl.t[i]): [("личная вещь", d.box)]},
         facts={"span": float(span)},
         verify=[(float(tl.t[i]), tl.layout.desk,
@@ -323,6 +323,15 @@ def rule_door_open(tl: Timeline, blob: dict | None, series: np.ndarray | None) -
             break
     if t_open is None or tl.duration - t_open < 4.0:
         return []
+    # the start of the clip is the "closed" reference: it must really show the door region clear of people,
+    # and the region must not differ already at the start (then the door may have been open and got closed)
+    if t_open < 1.0:
+        return []
+    for i in range(min(3, len(tl.t))):
+        for p in tl.coco[i]:
+            if p.label == "person" and p.score >= 0.3 and max(overlap_frac(blob["box"], p.box),
+                                                               overlap_frac(p.box, blob["box"])) > 0.3:
+                return []
     i_ev = tl.idx(t_open)
     return [Event(
         type="door_open", t=t_open, t_start=t_open, t_end=tl.duration,
@@ -414,7 +423,10 @@ def rule_client_cash(tl: Timeline) -> list[Event]:
         return []
     events = []
     fps = _fps(tl)
+    used_next: set[int] = set()
     for k, box in visitor_exits(tl):
+        if tl.occ[k] != 1:
+            continue  # the client left and only the cashier remains
         # the visitor must have stayed a while (a client, not a passer-by)
         prev_entries = [e for e, _ in tl.entries if e < k]
         if prev_entries and tl.t[k] - tl.t[prev_entries[-1]] < 6.0:
@@ -427,12 +439,15 @@ def rule_client_cash(tl: Timeline) -> list[Event]:
             continue
         i_best, d_best = max(seen, key=lambda s: s[1].score)
         t_exit = float(tl.t[k])
-        nxt = [e for e, _ in visitor_entries(tl) if e > k and tl.t[e] - t_exit <= 30]
+        nxt = [e for e, _ in visitor_entries(tl) if e > k and tl.t[e] - t_exit <= 30 and tl.occ[e - 1] == 1]
         if nxt:
             e = nxt[0]
+            if e in used_next:
+                continue  # an earlier exit already reported the cash seen at this entry
             still = [d for i in range(max(k, e - int(3 * fps)), min(len(tl.t), e + int(2 * fps)))
                      if i in tl.owl for d in cash_on_desk(tl, i)]
             if still:
+                used_next.add(e)
                 t_ev = float(tl.t[e])
                 events.append(Event(
                     type="prev_client_cash", t=t_ev, t_start=t_exit, t_end=t_ev,
@@ -457,9 +472,15 @@ def rule_client_cash(tl: Timeline) -> list[Event]:
 
 def rule_second_visitor(tl: Timeline) -> list[Event]:
     events = []
+    spans = []
     for a, b in runs(tl.occ >= 3):
         if tl.t[b] - tl.t[a] < 4.0:
             continue
+        if spans and tl.t[a] - tl.t[spans[-1][1]] <= 3.0:
+            spans[-1] = (spans[-1][0], b)
+        else:
+            spans.append((a, b))
+    for a, b in spans:
         # report the moment the extra person is already at the desk, not the moment they walk in
         t_ev = float(tl.t[a]) + min(4.0, float(tl.t[b] - tl.t[a]) / 2)
         mid = (a + b) // 2
@@ -474,9 +495,19 @@ def rule_second_visitor(tl: Timeline) -> list[Event]:
     return events
 
 
+def _bag_dets(tl: Timeline, i: int) -> list[Det]:
+    out = [d for d in tl.coco[i] if d.label in ("handbag", "backpack", "suitcase") and d.score >= 0.4]
+    if i in tl.owl:
+        out += [d for d in tl.owl[i] if d.label == "bag" and d.score >= 0.3]
+    return out
+
+
 def rule_bag_handover(tl: Timeline) -> list[Event]:
-    """A visitor comes in, leaves a bag at the desk and is gone within seconds."""
+    """A visitor comes in, leaves a bag on the desk and is gone within seconds."""
+    if tl.layout.desk is None:
+        return []
     events = []
+    fps = _fps(tl)
     exits = visitor_exits(tl)
     for e, _ in visitor_entries(tl):
         if tl.occ[e - 1] != 1:
@@ -488,14 +519,12 @@ def rule_bag_handover(tl: Timeline) -> list[Event]:
         stay = float(tl.t[k] - tl.t[e])
         if stay > 12.0 or stay < 2.0:
             continue
-        bags = []
-        for i in range(e, k + 1):
-            bags += [(i, d) for d in tl.coco[i] if d.label in ("handbag", "backpack", "suitcase") and d.score >= 0.4]
-            if i in tl.owl:
-                bags += [(i, d) for d in tl.owl[i] if d.label == "bag" and d.score >= 0.3]
+        before = [d.box for j in range(max(0, e - int(10 * fps)), e) for d in _bag_dets(tl, j)]
+        bags = [(i, d) for i in range(e, k + 1) for d in _bag_dets(tl, i)
+                if on_desk(d.box, tl.layout.desk, 0.5) and all(iou(d.box, bb) < 0.3 for bb in before)]
         if len(bags) < 2:
             continue
-        i, d = max(bags, key=lambda b: b[1].score)
+        i, d = bags[0]
         t_ev = float(tl.t[i])
         events.append(Event(
             type="bag_no_check", t=t_ev, t_start=float(tl.t[e]), t_end=float(tl.t[k]),

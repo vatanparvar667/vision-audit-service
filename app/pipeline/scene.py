@@ -85,7 +85,7 @@ def track_people(dets: list[list[Det]], frame_h: float, max_gap: int = 8) -> lis
     return tracks
 
 
-def in_room_tracks(tracks: list[Track], width: int, height: int, min_len: int = 3) -> list[Track]:
+def in_room_tracks(tracks: list[Track], width: int, height: int, min_len: int = 3, scale: float = 1.0) -> list[Track]:
     """People physically in the room. Passers-by behind the glass wall and reflections in it are confidently
     detected too, but they are smaller and stand higher in the frame (further away)."""
     frame = float(width * height)
@@ -93,7 +93,7 @@ def in_room_tracks(tracks: list[Track], width: int, height: int, min_len: int = 
     for t in tracks:
         if len(t.boxes) < min_len or t.peak() < 0.8:
             continue
-        areas = [(b[2] - b[0]) * (b[3] - b[1]) / frame for b in t.boxes.values()]
+        areas = [(b[2] - b[0]) * (b[3] - b[1]) / frame / scale for b in t.boxes.values()]
         area = float(np.median(areas))
         bottom = float(np.median([b[3] for b in t.boxes.values()])) / height
         if area >= 0.022 or (area >= 0.014 and bottom >= 0.42):

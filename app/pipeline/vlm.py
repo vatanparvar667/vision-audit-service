@@ -21,8 +21,8 @@ class YesNoVLM:
         self.device = device if torch.cuda.is_available() else "cpu"
         self.proc = AutoProcessor.from_pretrained(model_dir)
         kw = {"dtype": torch.bfloat16}
-        if self.device == "cuda":
-            kw["device_map"] = "cuda"
+        if self.device.startswith("cuda"):
+            kw["device_map"] = self.device
             kw["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=torch.bfloat16)
         self.model = AutoModelForImageTextToText.from_pretrained(model_dir, **kw).eval()
@@ -35,6 +35,9 @@ class YesNoVLM:
     def yes_prob(self, image: np.ndarray | Image.Image, question: str) -> float:
         if isinstance(image, np.ndarray):
             image = Image.fromarray(image)
+        else:
+            image = image.copy()
+        image.thumbnail((1280, 1280))  # large camera frames would explode the number of image tokens
         msgs = [{"role": "user", "content": [
             {"type": "image", "image": image},
             {"type": "text", "text": question.strip() + "\nAnswer with one word: Yes or No."},
@@ -42,7 +45,7 @@ class YesNoVLM:
         with self.lock:
             inputs = self.proc.apply_chat_template(msgs, tokenize=True, add_generation_prompt=True,
                                                    return_dict=True, return_tensors="pt").to(self.model.device)
-            logits = self.model(**inputs).logits[0, -1].float()
+            logits = self.model(**inputs, logits_to_keep=1, use_cache=False).logits[0, -1].float()
         probs = torch.softmax(logits, dim=-1)
         y = float(probs[self.yes_ids].sum())
         n = float(probs[self.no_ids].sum())

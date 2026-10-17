@@ -2,8 +2,8 @@
 
 const $ = (id) => document.getElementById(id);
 const els = {
-  drop: $("drop"), fileInput: $("fileInput"), player: $("player"), video: $("video"),
-  marks: $("marks"), played: $("played"), durLabel: $("durLabel"),
+  drop: $("drop"), pickBtn: $("pickBtn"), fileInput: $("fileInput"), player: $("player"), video: $("video"),
+  videoNote: $("videoNote"), marks: $("marks"), played: $("played"), durLabel: $("durLabel"),
   idle: $("stateIdle"), work: $("stateWork"), fail: $("stateFail"), done: $("stateDone"),
   workFile: $("workFile"), meter: $("meter"), meterFill: $("meterFill"), workStage: $("workStage"),
   failText: $("failText"), retryBtn: $("retryBtn"), resetBtn: $("resetBtn"),
@@ -22,17 +22,20 @@ const STAGES = {
   verifying: "Проверка найденных моментов",
   report: "Подготовка отчёта",
 };
+const POLL_RETRIES = 5;  // failed status requests in a row (1, 2, 4, 8, 16 s apart) before the error is shown
 
+let run = new AbortController();  // one per picked file: reset() aborts it, so a late upload or poll response is dropped
 let pollTimer = null;
 let objectUrl = null;
-let currentJob = null;
+let shown = null;   // the job whose result is on screen
+let fileDur = 0;    // duration from the file header, for a video the browser cannot decode
 
 function show(state) {
   for (const el of [els.idle, els.work, els.fail, els.done]) el.hidden = el !== state;
 }
 
 function fmtTime(sec) {
-  const s = Math.max(0, sec);
+  const s = Math.round(Math.max(0, sec) * 10) / 10;  // round first: 59.96 s is 1:00.0, not 0:60.0
   const m = Math.floor(s / 60);
   const rest = s - m * 60;
   return `${m}:${rest.toFixed(1).padStart(4, "0")}`;
@@ -62,6 +65,7 @@ fetch("/api/v1/violation-types").then((r) => r.json()).then((data) => {
 function pickFile(file) {
   if (!file) return;
   reset(false);
+  const { signal } = run;
   els.drop.hidden = true;
   els.player.hidden = false;
   els.resetBtn.hidden = false;
@@ -70,40 +74,50 @@ function pickFile(file) {
   els.workFile.textContent = file.name;
   show(els.work);
   setMeter(0, "Загрузка видео на сервер — 0%");
+  headerDuration(file).then((d) => { if (!signal.aborted && d > 0) { fileDur = d; drawTimeline(); } }, () => {});
 
   const form = new FormData();
   form.append("file", file);
   const xhr = new XMLHttpRequest();
+  signal.addEventListener("abort", () => xhr.abort());
   xhr.open("POST", "/ui/analyze");
   xhr.upload.onprogress = (e) => {
-    if (e.lengthComputable) setMeter(e.loaded / e.total * 0.15, `Загрузка видео на сервер — ${Math.round(e.loaded / e.total * 100)}%`);
+    if (!signal.aborted && e.lengthComputable) setMeter(e.loaded / e.total * 0.15, `Загрузка видео на сервер — ${Math.round(e.loaded / e.total * 100)}%`);
   };
   xhr.onload = () => {
+    if (signal.aborted) return;
     let body = {};
     try { body = JSON.parse(xhr.responseText); } catch (_) {}
     if (xhr.status >= 200 && xhr.status < 300 && body.job_id) {
-      currentJob = body.job_id;
       setMeter(0.15, STAGES.queued);
-      poll();
+      poll(body.job_id, signal);
     } else {
       fail(body.detail || `Сервер ответил кодом ${xhr.status}. Проверьте, что файл — видео в формате .mov.`);
     }
   };
-  xhr.onerror = () => fail("Не удалось отправить файл: сервер недоступен. Проверьте подключение и попробуйте ещё раз.");
+  xhr.onerror = () => {
+    if (!signal.aborted) fail("Не удалось отправить файл: сервер недоступен. Проверьте подключение и попробуйте ещё раз.");
+  };
   xhr.send(form);
 }
 
-function poll() {
-  clearTimeout(pollTimer);
-  fetch(`/ui/jobs/${currentJob}`).then((r) => r.json()).then((job) => {
+function poll(jobId, signal, failures = 0) {
+  fetch(`/ui/jobs/${jobId}`, { signal }).then((r) => (r.ok ? r.json() : Promise.reject(r.status))).then((job) => {
+    if (signal.aborted) return;
     if (job.status === "done") return render(job);
     if (job.status === "failed") return fail(`Анализ остановился с ошибкой: ${job.error || "неизвестная ошибка"}. Попробуйте загрузить файл ещё раз.`);
     let text = STAGES[job.stage] || STAGES.analyzing;
     if (job.stage === "queued" && job.queue_position > 0) text += ` — перед вами ${job.queue_position}`;
     else if (job.progress) text += ` — ${Math.round(job.progress * 100)}%`;
     setMeter(0.15 + 0.85 * (job.progress || 0), text);
-    pollTimer = setTimeout(poll, 1000);
-  }).catch(() => { pollTimer = setTimeout(poll, 2500); });
+    pollTimer = setTimeout(() => poll(jobId, signal), 1000);
+  }, (err) => {
+    if (signal.aborted) return;
+    const why = typeof err === "number" ? `Сервер ответил кодом ${err}` : "Сервер недоступен";
+    if (failures >= POLL_RETRIES) return fail(`Не удалось получить результат анализа. ${why}. Попробуйте загрузить файл ещё раз.`);
+    els.workStage.textContent = `${why} — повторяем запрос…`;
+    pollTimer = setTimeout(() => poll(jobId, signal, failures + 1), 1000 * 2 ** failures);
+  });
 }
 
 function fail(text) {
@@ -113,6 +127,7 @@ function fail(text) {
 
 // ---- result ---------------------------------------------------------------------------------
 function render(job) {
+  shown = job;
   const violations = job.violations || [];
   const isViolation = job.verdict === "violation";
   els.stamp.classList.toggle("is-clear", !isViolation);
@@ -134,7 +149,7 @@ function render(job) {
     : (job.notes || "В кадре не найдено действий, похожих на нарушения из перечня, который проверяет сервис.");
 
   els.findings.replaceChildren(...violations.map(renderFinding));
-  drawMarks(violations);
+  drawTimeline();
   show(els.done);
 }
 
@@ -143,7 +158,7 @@ function renderFinding(v, i) {
   node.dataset.index = String(i);
   const tc = node.querySelector(".tc");
   tc.textContent = fmtTime(v.timecode_sec);
-  tc.addEventListener("click", () => seek(v.timecode_sec, i));
+  tc.addEventListener("click", () => seek(v.timecode_sec, i, true));
   node.querySelector(".finding__type").textContent = v.type;
   const conf = node.querySelector(".finding__conf");
   if (v.confidence) conf.textContent = `уверенность: ${v.confidence}`; else conf.remove();
@@ -176,22 +191,21 @@ function renderFinding(v, i) {
     } else ref.textContent = label;
     if (norm.quote) quote.textContent = `«${norm.quote}»`; else quote.remove();
     const note = node.querySelector(".norm__note");
-    if (norm.interpretation) note.textContent = `Толкование: ${norm.interpretation}`; else note.remove();
+    if (norm.interpretation) note.textContent = `${norm.strength === "interpretation" ? "Толкование" : "Пояснение"}: ${norm.interpretation}`; else note.remove();
   } else node.querySelector(".norm").remove();
   return node;
 }
 
-function drawMarks(violations) {
-  const dur = els.video.duration;
-  if (!isFinite(dur) || dur <= 0) {
-    els.video.addEventListener("loadedmetadata", () => drawMarks(violations), { once: true });
-    return;
-  }
-  els.durLabel.textContent = fmtTime(dur).replace(/\.\d$/, "");
-  els.marks.replaceChildren(...violations.map((v, i) => {
+// Redrawn whenever the duration becomes known. Without the player's own duration (a file the browser
+// cannot decode) the scale comes from the result, then from the file header.
+function drawTimeline() {
+  const d = els.video.duration;
+  const dur = isFinite(d) && d > 0 ? d : shown?.video?.duration_sec || fileDur;
+  els.durLabel.textContent = dur ? fmtTime(dur).replace(/\.\d$/, "") : "";
+  els.marks.replaceChildren(...(dur && shown?.violations || []).map((v, i) => {
     const m = document.createElement("button");
     m.type = "button"; m.className = "mark";
-    m.style.left = `${(v.timecode_sec / dur) * 100}%`;
+    m.style.left = `${Math.min(100, (v.timecode_sec / dur) * 100)}%`;
     m.dataset.label = fmtTime(v.timecode_sec).replace(/\.\d$/, "");
     m.setAttribute("aria-label", `${v.type}, ${fmtTime(v.timecode_sec)}`);
     m.addEventListener("click", () => seek(v.timecode_sec, i));
@@ -199,12 +213,38 @@ function drawMarks(violations) {
   }));
 }
 
-function seek(t, i) {
+// Movie duration from the QuickTime/MP4 header (moov > mvhd); 0 when the file has none.
+async function headerDuration(file) {
+  const read = async (pos, len) => new DataView(await file.slice(pos, pos + len).arrayBuffer());
+  const u64 = (v, at) => v.getUint32(at) * 2 ** 32 + v.getUint32(at + 4);
+  let pos = 0, end = file.size;
+  for (let n = 0; n < 100 && pos + 8 <= end; n++) {
+    const h = await read(pos, 16);
+    let size = h.getUint32(0), head = 8;
+    if (size === 1) { size = u64(h, 8); head = 16; } else if (size === 0) size = end - pos;
+    if (size < head) return 0;
+    const type = String.fromCharCode(h.getUint8(4), h.getUint8(5), h.getUint8(6), h.getUint8(7));
+    if (type === "moov") { end = pos + size; pos += head; continue; }
+    if (type === "mvhd") {
+      const v = await read(pos + head, 32);
+      const long = v.getUint8(0) === 1;
+      const scale = v.getUint32(long ? 20 : 12);
+      return scale ? (long ? u64(v, 24) : v.getUint32(16)) / scale : 0;
+    }
+    pos += size;
+  }
+  return 0;
+}
+
+// On a phone the player is above the report: a timecode tap brings the video into view,
+// a tap on a timeline mark brings its finding.
+function seek(t, i, toVideo = false) {
   els.video.currentTime = t;
   els.video.pause();
   els.findings.querySelectorAll(".finding").forEach((n) => n.classList.toggle("is-active", n.dataset.index === String(i)));
-  const target = els.findings.querySelector(`[data-index="${i}"]`);
-  if (target && window.matchMedia("(max-width: 820px)").matches) target.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!window.matchMedia("(max-width: 820px)").matches) return;
+  const target = toVideo ? els.player : els.findings.querySelector(`[data-index="${i}"]`);
+  if (target) target.scrollIntoView({ behavior: "smooth", block: toVideo ? "nearest" : "start" });
 }
 
 function openFrame(src, caption) {
@@ -217,26 +257,33 @@ els.video.addEventListener("timeupdate", () => {
   const d = els.video.duration;
   if (isFinite(d) && d > 0) els.played.style.width = `${(els.video.currentTime / d) * 100}%`;
 });
-els.video.addEventListener("loadedmetadata", () => {
-  els.durLabel.textContent = fmtTime(els.video.duration).replace(/\.\d$/, "");
-});
+els.video.addEventListener("durationchange", drawTimeline);
+// the server reads more codecs than browsers do: explain the dead player instead of leaving it black
+els.video.addEventListener("loadedmetadata", () => { if (!els.video.videoWidth) els.videoNote.hidden = false; });
+els.video.addEventListener("error", () => { if (els.video.getAttribute("src")) els.videoNote.hidden = false; });
 
 // ---- reset / inputs -------------------------------------------------------------------------
 function reset(toIdle = true) {
+  run.abort();
+  run = new AbortController();
   clearTimeout(pollTimer);
-  currentJob = null;
+  shown = null; fileDur = 0;
   if (objectUrl) { URL.revokeObjectURL(objectUrl); objectUrl = null; }
   els.video.removeAttribute("src"); els.video.load();
   els.marks.replaceChildren(); els.findings.replaceChildren();
   els.played.style.width = "0";
+  els.durLabel.textContent = "";
+  els.videoNote.hidden = true;
   if (toIdle) {
     els.drop.hidden = false; els.player.hidden = true; els.resetBtn.hidden = true;
     els.fileInput.value = "";
     show(els.idle);
+    els.pickBtn.focus();
   }
 }
 
 els.fileInput.addEventListener("change", () => pickFile(els.fileInput.files[0]));
+els.drop.addEventListener("click", () => els.fileInput.click());
 els.resetBtn.addEventListener("click", () => reset());
 els.retryBtn.addEventListener("click", () => { reset(); els.fileInput.click(); });
 ["dragenter", "dragover"].forEach((ev) => els.drop.addEventListener(ev, (e) => { e.preventDefault(); els.drop.classList.add("is-over"); }));

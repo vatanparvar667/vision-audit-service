@@ -5,7 +5,7 @@ import base64
 import cv2
 
 from app.norms import VIOLATIONS, primary_norm
-from app.pipeline.rules import Event, Timeline
+from app.pipeline.rules import Event, Timeline, _dedup
 from app.pipeline.video import VideoClip
 
 MIN_SCORE = 0.5          # events below this are not reported
@@ -14,18 +14,19 @@ COLORS = [(40, 40, 230), (0, 170, 255), (255, 120, 0)]
 
 
 def _fmt(t: float) -> str:
-    m, s = divmod(max(0.0, t), 60)
-    return f"{int(m)}:{s:04.1f}"
+    tenths = int(round(max(0.0, t) * 10))
+    m, rest = divmod(tenths, 600)
+    return f"{m}:{rest // 10:02d}.{rest % 10}"
 
 
 def describe(e: Event) -> str:
     f = e.facts
     d = {
         "cash_unattended": lambda: (
-            f"Около {_fmt(f['t_exit'])} кассир покидает помещение. После этого на столе видны: {', '.join(f['items'])}; "
+            f"Около {_fmt(e.t)} кассир покидает рабочее место. После этого на столе видны: {', '.join(f['items'])}; "
             f"людей в помещении нет не менее {f['empty_for']:.0f} с. Ценности остаются без присмотра вне закрывающегося хранилища."),
         "pc_unlocked": lambda: (
-            f"Около {_fmt(f['t_exit'])} кассир уходит, а экран компьютера продолжает показывать рабочее приложение: "
+            f"Около {_fmt(e.t)} кассир уходит, а экран компьютера продолжает показывать рабочее приложение: "
             f"признаков блокировки экрана в кадре не видно."),
         "food_drink": lambda: (
             f"Человек за кассовым столом подносит к лицу чашку или бутылку (эпизод около {max(1.0, f['duration']):.0f} с). "
@@ -86,7 +87,7 @@ def evidence_frames(clip: VideoClip, e: Event) -> list[dict]:
 
 
 def build_report(clip: VideoClip, tl: Timeline, events: list[Event]) -> dict:
-    reported = [e for e in events if e.score >= MIN_SCORE]
+    reported = _dedup([e for e in events if e.score >= MIN_SCORE], window=3.0)
     reported = sorted(reported, key=lambda e: -e.score)[:MAX_EVENTS]
     reported.sort(key=lambda e: e.t)
     violations = []

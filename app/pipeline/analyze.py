@@ -21,6 +21,7 @@ COCO_FPS = 4.0
 OWL_EVERY_S = 1.0
 USE_DESK_PASS = False  # second OWLv2 pass on the desk crop: no gain on the dataset, one extra false positive
 SAFE_EVERY_S = 2.0
+VLM_RETRY_S = 300.0  # after a failed VLM load, try again on a later job instead of never
 
 _models: dict = {}
 _models_lock = threading.Lock()
@@ -37,15 +38,21 @@ def get_vlm():
     if not settings.use_vlm:
         return None
     with _models_lock:
-        if "vlm" not in _models:
-            from app.pipeline.vlm import YesNoVLM
+        if _models.get("vlm") is not None:
+            return _models["vlm"]
+        if time.time() < _models.get("vlm_retry_at", 0.0):
+            return None
+        from app.pipeline.vlm import YesNoVLM
 
-            path = settings.models_dir / "Qwen3-VL-4B-Instruct"
-            try:
-                _models["vlm"] = YesNoVLM(path, settings.device) if path.exists() else None
-            except Exception as exc:  # e.g. not enough GPU memory: rules still work, unverified
-                log.error("VLM not loaded, continuing without verification: %s", exc)
-                _models["vlm"] = None
+        path = settings.models_dir / "Qwen3-VL-4B-Instruct"
+        try:
+            if not path.exists():
+                raise FileNotFoundError(f"VLM folder {path} not found")
+            _models["vlm"] = YesNoVLM(path, settings.device)
+        except Exception as exc:  # e.g. not enough GPU memory: rules still work, unverified
+            log.error("VLM not loaded, continuing without verification (retry in %.0fs): %s", VLM_RETRY_S, exc)
+            _models["vlm_retry_at"] = time.time() + VLM_RETRY_S
+            return None
         return _models["vlm"]
 
 
@@ -83,7 +90,7 @@ def add_desk_pass(clip: VideoClip, coco, owl, idx, progress=None):
 def build_timeline(clip: VideoClip, coco, owl) -> R.Timeline:
     all_tracks = track_people(coco, clip.height)
     scale = person_scale(all_tracks, clip.width, clip.height)
-    tracks = in_room_tracks(all_tracks, clip.width, clip.height)
+    tracks = in_room_tracks(all_tracks, clip.width, clip.height, scale=scale)
     people = [room_people(f, clip.width, clip.height, scale) for f in coco]
     occ = rolling_median(np.array([len(p) for p in people]), 7)
     entries, exits = occupancy_changes(people, occ)
@@ -145,10 +152,24 @@ def safe_probs(clip: VideoClip, vlm, progress=None) -> dict[int, float]:
     idx = list(range(0, len(clip.samples), step))
     out = {}
     for k, i in enumerate(idx):
-        out[i] = vlm.yes_prob(clip.rgb(i), "Is the door of the metal safe open?")
+        try:
+            out[i] = vlm.yes_prob(clip.rgb(i), "Is the door of the metal safe open?")
+        except Exception as exc:  # a VLM failure must not fail the whole video
+            log.error("safe check failed at sample %d, skipping the rest: %s", i, exc)
+            _free_gpu()
+            break
         if progress:
             progress(0.7 + 0.15 * (k + 1) / len(idx), "verifying")
     return out
+
+
+def _free_gpu() -> None:
+    try:
+        import torch
+
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
 
 
 def verify(clip: VideoClip, events: list[R.Event], vlm) -> list[R.Event]:
@@ -160,9 +181,14 @@ def verify(clip: VideoClip, events: list[R.Event], vlm) -> list[R.Event]:
     kept = []
     for e in events:
         probs = []
-        for t, box, question in e.verify:
-            img = clip.rgb(clip.nearest(t))
-            probs.append(vlm.yes_prob(crop(img, box) if box is not None else img, question))
+        try:
+            for t, box, question in e.verify:
+                img = clip.rgb(clip.nearest(t))
+                probs.append(vlm.yes_prob(crop(img, box) if box is not None else img, question))
+        except Exception as exc:  # keep the rule's own score when the verifier fails
+            log.error("verification of %s failed: %s", e.type, exc)
+            _free_gpu()
+            probs = []
         e.facts["vlm"] = [round(p, 3) for p in probs]
         if probs:
             p = float(np.mean(probs))
@@ -184,7 +210,11 @@ def analyze_clip(clip: VideoClip, perception: dict | None = None, progress=None,
     events = verify(clip, events, vlm)
     if progress:
         progress(0.95, "report")
-    return build_report(clip, tl, events)
+    report = build_report(clip, tl, events)
+    if use_vlm and settings.use_vlm and vlm is None:
+        report["notes"] = ("Проверка через визуально-языковую модель недоступна: открытый сейф, напитки и личные "
+                           "вещи в этом прогоне не проверялись.")
+    return report
 
 
 def analyze_video(path: Path, progress=None) -> dict:
