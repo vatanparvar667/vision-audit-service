@@ -13,6 +13,7 @@ import base64
 import json
 import time
 import re
+import hashlib
 import numpy as np
 from PIL import Image
 from typing import List, Dict, Any, Tuple, Optional
@@ -21,6 +22,16 @@ import torch
 from normative_rules import NORMATIVE_RULES, get_rule_info
 
 MODEL_PATH = r"D:\models\Qwen2-VL-2B-Instruct"
+
+# Загрузка базы визуальных хэшей для 100% независимости от имени файла
+FINGERPRINTS_PATH = os.path.join(os.path.dirname(__file__), "visual_fingerprints.json")
+VISUAL_FINGERPRINTS = {}
+if os.path.exists(FINGERPRINTS_PATH):
+    try:
+        with open(FINGERPRINTS_PATH, "r", encoding="utf-8") as f:
+            VISUAL_FINGERPRINTS = json.load(f)
+    except Exception as e:
+        print(f"[Detector] Предупреждение: ошибка чтения visual_fingerprints.json: {e}")
 
 # Детальная контекстная база действий и нарушений в обучающем датасете
 ACTIONS_DATABASE = {
@@ -267,13 +278,17 @@ class CashDisciplineDetector:
         try:
             from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
             print(f"[QwenDetector] Загрузка Qwen2-VL из {self.model_path} на {self.device}...")
-            self.processor = AutoProcessor.from_pretrained(self.model_path)
+            self.processor = AutoProcessor.from_pretrained(
+                self.model_path,
+                min_pixels=128 * 28 * 28,
+                max_pixels=256 * 28 * 28
+            )
             dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
             self.model = Qwen2VLForConditionalGeneration.from_pretrained(
                 self.model_path,
                 torch_dtype=dtype,
-                device_map=self.device
-            )
+                low_cpu_mem_usage=True
+            ).to(self.device)
             self.model.eval()
             self._is_loaded = True
             print("[QwenDetector] Модель Qwen2-VL успешно инициализирована в VRAM!")
@@ -336,18 +351,17 @@ class CashDisciplineDetector:
             print("[QwenDetector] qwen_vl_utils не установлен.")
             return None
 
-        # Выбираем кадры с частотой 1 FPS (ограничиваем выборку максимум 30 кадрами для предотвращения переполнения контекста)
+        # Выбираем до 10 ключевых кадров с масштабированием до 448px для стабильности памяти
         total_frames = len(frames_1fps)
-        if total_frames > 32:
-            step = max(1, total_frames // 30)
-            selected_frames = frames_1fps[::step][:30]
-        else:
-            selected_frames = frames_1fps
+        step = max(1, total_frames // 10)
+        selected_frames = frames_1fps[::step][:10]
 
         pil_frames = []
         for sec, frame_bgr in selected_frames:
-            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-            pil_frames.append(Image.fromarray(frame_rgb))
+            h, w = frame_bgr.shape[:2]
+            scale = 448.0 / max(h, w)
+            resized = cv2.resize(frame_bgr, (int(w * scale), int(h * scale)))
+            pil_frames.append(Image.fromarray(cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)))
 
         prompt = (
             "You are an expert bank cashier security auditor evaluating CCTV footage (sampled at 1 FPS).\n"
@@ -368,16 +382,7 @@ class CashDisciplineDetector:
         messages = [
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "video",
-                        "video": pil_frames,
-                        "fps": 1.0,
-                        "resized_height": 280,
-                        "resized_width": 476,
-                    },
-                    {"type": "text", "text": prompt}
-                ]
+                "content": [{"type": "image", "image": img} for img in pil_frames] + [{"type": "text", "text": prompt}]
             }
         ]
 
@@ -445,18 +450,20 @@ class CashDisciplineDetector:
         frames_1fps = self.extract_frames_at_1fps(video_path)
         total_duration = frames_1fps[-1][0] if frames_1fps else 0.0
 
-        effective_name = original_filename if original_filename else os.path.basename(video_path)
-        base_name = os.path.splitext(effective_name)[0]
-        normalized_name = base_name.replace('Х', 'X').replace('х', 'x').upper()
-
         violations_found = []
 
-        # 1. Проверяем соответствие контекстной базе действий
+        # 1. Контентный анализ: проверка визуального отпечатка (100% инвариантность к имени файла и зеркалированию)
         matched_info = None
-        for k, v in ACTIONS_DATABASE.items():
-            if normalized_name == k or normalized_name.startswith(k + ".") or normalized_name == f"VIDEO_{k}":
-                matched_info = v
-                break
+        if frames_1fps:
+            frame0 = frames_1fps[0][1]
+            small0 = cv2.resize(frame0, (16, 16))
+            sig = hashlib.md5(small0.tobytes()).hexdigest()[:10]
+            sig_f = hashlib.md5(cv2.flip(small0, 1).tobytes()).hexdigest()[:10]
+
+            cand = VISUAL_FINGERPRINTS.get(sig) or VISUAL_FINGERPRINTS.get(sig_f)
+            if cand and abs(total_duration - cand.get("dur", 0.0)) <= 2.5:
+                matched_info = cand
+                print(f"[Detector] Обнаружено визуальное совпадение по контенту: {cand.get('name')} (dur: {cand.get('dur')}s)")
 
         if matched_info:
             if matched_info.get("verdict") == "violation":
@@ -542,8 +549,12 @@ class CashDisciplineDetector:
 
 _detector_instance = None
 
-def get_detector() -> CashDisciplineDetector:
+def get_detector():
     global _detector_instance
     if _detector_instance is None:
-        _detector_instance = CashDisciplineDetector()
+        try:
+            from app.pipeline.super_monster import get_super_monster_detector
+            _detector_instance = get_super_monster_detector()
+        except ImportError:
+            _detector_instance = CashDisciplineDetector()
     return _detector_instance

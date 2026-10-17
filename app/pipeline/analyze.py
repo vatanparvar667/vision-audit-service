@@ -50,9 +50,13 @@ def get_vlm():
 
 def warmup() -> None:
     t0 = time.time()
-    get_perception()
-    get_vlm()
-    log.info("models ready in %.1fs", time.time() - t0)
+    try:
+        from app.pipeline.super_monster import get_super_monster_detector
+        det = get_super_monster_detector()
+        det.load_model_if_available()
+        log.info("Super Monster hybrid model ready in %.1fs", time.time() - t0)
+    except Exception as exc:
+        log.warning("Warmup notice: %s", exc)
 
 
 def perceive(clip: VideoClip, progress=None) -> dict:
@@ -172,8 +176,6 @@ def analyze_clip(clip: VideoClip, perception: dict | None = None, progress=None,
 
 
 def analyze_video(path: Path, progress=None) -> dict:
-    if progress:
-        progress(0.02, "decoding")
-    clip = read_video(str(path), sample_fps=COCO_FPS,
-                      progress=(lambda f: progress(0.02 + 0.13 * f, "decoding")) if progress else None)
-    return analyze_clip(clip, progress=progress)
+    from app.pipeline.super_monster import get_super_monster_detector
+    detector = get_super_monster_detector()
+    return detector.detect_violations(str(path), original_filename=path.name, progress_cb=progress)
