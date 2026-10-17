@@ -1,0 +1,11 @@
+# torch/torchvision come from the base image (pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime)
+transformers==5.9.0
+accelerate==1.15.0
+bitsandbytes==0.50.2
+huggingface_hub==1.16.1
+opencv-python-headless==4.11.0.86
+pillow==12.3.0
+numpy==2.2.6
+fastapi==0.136.1
+uvicorn==0.46.0
+python-multipart==0.0.29

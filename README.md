@@ -22,8 +22,22 @@ copy .env.example .env      # затем впишите свой ключ в API
 .\run_server.ps1            # http://localhost:8000
 ```
 
-Публичный адрес без своего домена — через Cloudflare Tunnel:
-`cloudflared tunnel --url http://localhost:8000` (печатает адрес вида `https://….trycloudflare.com`).
+### Docker (сервер с NVIDIA GPU от 6 ГБ)
+
+```bash
+cp .env.example .env              # впишите ключ API_KEYS
+docker compose up -d --build      # при первом старте веса (~9 ГБ) скачаются в ./models
+docker compose logs -f            # ждать строку "models ready"
+```
+
+Нужны драйвер NVIDIA и NVIDIA Container Toolkit (на Windows — Docker Desktop с WSL2). Образ собран и проверен
+на RTX 4050 (6 ГБ): модели занимают ~5 ГБ видеопамяти, видео 15–25 с обрабатывается за 8–20 с.
+
+### Публичный адрес
+
+Сервис слушает порт 8000. Варианты: облачная GPU-машина с публичным адресом (рекомендуется — не зависит от
+ноутбука и сети), либо туннель с ноутбука: `ngrok http 8000` (нужен бесплатный аккаунт, есть постоянный домен)
+или `cloudflared tunnel --url http://localhost:8000` (в некоторых сетях порт 7844 закрыт).
 
 ## API (раздел 10 ТЗ)
 
@@ -96,7 +110,8 @@ python scripts/api_client.py https://<адрес> <ключ> video_017.mov   # �
 ## Качество на обучающем датасете
 
 `scripts/build_cache.py` считает детекции один раз, `scripts/eval.py --vlm` сравнивает с разметкой
-(вердикт по видео и ошибка таймкода). Результаты текущей версии — в `docs/RESULTS.md`.
+(вердикт по видео и ошибка таймкода). Текущая версия: верный вердикт 35 из 40 видео, ложных срабатываний 0,
+медианная ошибка таймкода 2.2 с; построчно — `docs/eval_train.txt`, разбор видео — `docs/DATASET.md`.
 
 ## Ограничения
 

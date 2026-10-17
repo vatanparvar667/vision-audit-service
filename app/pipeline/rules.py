@@ -100,7 +100,7 @@ ITEM_Q = {
 def rule_left_unattended(tl: Timeline) -> list[Event]:
     events = []
     empty = tl.occ == 0
-    label_ru = {"cash": "наличные", "bag": "сумка", "document": "документы"}
+    label_ru = {"cash": "наличные", "bag": "сумка", "document": "документы", "item": "посторонние предметы"}
     merged = []
     for a, b in runs(empty):
         if merged and tl.t[a] - tl.t[merged[-1][1]] <= 1.2:
@@ -117,9 +117,13 @@ def rule_left_unattended(tl: Timeline) -> list[Event]:
         found: dict[str, Det] = {}
         seen_at = i_check
         for i in range(a, b + 1):
-            if i not in tl.owl:
-                continue
-            for d in desk_items(tl, i):
+            cands = desk_items(tl, i) if i in tl.owl else []
+            # COCO sees closed booklets as "book" and cash capsules / coin tubes as "cup" or "bottle"
+            cands += [Det("document", d.score, d.box) for d in tl.coco[i]
+                      if d.label == "book" and d.score >= 0.42 and on_desk(d.box, tl.layout.desk, 0.6)]
+            cands += [Det("item", d.score, d.box) for d in tl.coco[i]
+                      if d.label in ("cup", "bottle") and d.score >= 0.35 and on_desk(d.box, tl.layout.desk, 0.6)]
+            for d in cands:
                 if d.label not in found or d.score > found[d.label].score:
                     found[d.label] = d
                     seen_at = i

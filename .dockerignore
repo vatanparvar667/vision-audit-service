@@ -1,0 +1,11 @@
+.git
+.venv
+models
+storage
+runs
+data
+docs
+.env
+**/__pycache__
+*.mov
+*.mp4
