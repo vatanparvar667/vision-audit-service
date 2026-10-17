@@ -427,6 +427,8 @@ def rule_client_cash(tl: Timeline) -> list[Event]:
     for k, box in visitor_exits(tl):
         if tl.occ[k] != 1:
             continue  # the client left and only the cashier remains
+        if box is None:
+            continue  # no distinct person disappeared: an occlusion (e.g. the cashier stood up), not an exit
         # the visitor must have stayed a while (a client, not a passer-by)
         prev_entries = [e for e, _ in tl.entries if e < k]
         if prev_entries and tl.t[k] - tl.t[prev_entries[-1]] < 6.0:
