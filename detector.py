@@ -7,6 +7,7 @@
 """
 
 import os
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import cv2
 import base64
 import json
@@ -276,8 +277,8 @@ class CashDisciplineDetector:
             self.model.eval()
             self._is_loaded = True
             print("[QwenDetector] Модель Qwen2-VL успешно инициализирована в VRAM!")
-            return True
         except Exception as e:
+            print(f"[QwenDetector] Ошибка загрузки Qwen2-VL: {e}")
             return False
 
     @staticmethod
@@ -349,17 +350,19 @@ class CashDisciplineDetector:
             pil_frames.append(Image.fromarray(frame_rgb))
 
         prompt = (
-            "You are a strict bank security inspector evaluating CCTV footage from a bank teller or cashier desk (sampled at 1 FPS).\n"
-            "Look for genuine violations of cash discipline and security regulations:\n"
-            "1. unattended_cash: Leaving banknotes or cash bundles unattended on the customer counter/desk when the cashier steps away or leaves.\n"
-            "2. eating_drinking: Cashier eating food, snacks or drinking beverages directly at the customer service desk.\n"
-            "3. unauthorized_person: An unauthorized person entering into the restricted employee staff area behind the counter.\n"
-            "4. open_safe_or_key_left: Safe door left open without supervision or keys left in the safe keyhole while cashier steps away.\n"
-            "5. personal_items: Personal outdoor jackets, coats, or personal bags sprawled on the customer transaction desk.\n"
-            "6. no_id_check_cash: Cashier taking cash bundles from a client without requesting and examining the customer's identity document/passport.\n\n"
-            "IMPORTANT: Normal cashier operations (customer greeting, checking documents/passports, counting cash, talking to clients, receptionist duties) are NOT violations and MUST be marked as no_violation.\n"
+            "You are an expert bank cashier security auditor evaluating CCTV footage (sampled at 1 FPS).\n"
+            "Analyze the footage for violations of Kazakhstan banking security and cash discipline regulations:\n"
+            "1. unattended_cash: Cash or banknotes left unattended on the counter when cashier leaves (Rules 231, cl. 20, 22).\n"
+            "2. encashment_bag_unattended: Cash collection / encashment bag left on the counter unattended (Rules 231, cl. 20, 32).\n"
+            "3. eating_drinking: Cashier eating food, snacks or drinking beverages directly at the teller desk (Rules 231, cl. 12).\n"
+            "4. personal_items: Personal jackets, outdoor coats or personal bags placed on the counter (Rules 231, cl. 12).\n"
+            "5. unauthorized_person: An unauthorized person entering into the employee secure cabin/zone (Rules 231, cl. 15, 75; Dec 250).\n"
+            "6. unlocked_terminal: Cashier stepping away from desk leaving computer terminal unlocked (Rules 231, cl. 22; Law 258-VIII, art. 69).\n"
+            "7. open_safe_or_key_left: Safe door left open or keys left in the safe keyhole while cashier steps away (Rules 231, cl. 20, 80).\n"
+            "8. no_id_check_cash: Cashier taking cash from a customer without checking identity documents first (Rules 231, cl. 7, 19; Law 191-IV).\n\n"
+            "IMPORTANT: Standard bank operations (greeting, document inspection, cash counting, client conversation, clean counter) are STRICTLY no_violation.\n"
             "Respond strictly in JSON format:\n"
-            '{"verdict": "no_violation" | "violation", "rule_id": "<id or null>", "type": "<violation type in Russian or null>", "timecode_sec": <float or null>, "description": "<detailed explanation in Russian>"}'
+            '{"verdict": "no_violation" | "violation", "rule_id": "<rule_id or null>", "type": "<violation type or null>", "timecode_sec": <float or null>, "description": "<detailed explanation in Russian>"}'
         )
 
         messages = [
@@ -411,6 +414,19 @@ class CashDisciplineDetector:
                     json_str = m.group(0)
 
             parsed = json.loads(json_str)
+
+            # Робастная верификация: если модель описала нарушение в rule_id или type, фиксируем violation
+            r_id = str(parsed.get("rule_id", "")).strip().lower()
+            v_type = str(parsed.get("type", "")).strip().lower()
+            if r_id in NORMATIVE_RULES:
+                parsed["verdict"] = "violation"
+            elif any(k in v_type or k in r_id for k in ["eat", "drink", "snack", "coat", "item", "bag", "cash", "unauthorized", "unlocked", "еда", "напиток", "куртка", "одежда"]):
+                parsed["verdict"] = "violation"
+                for k in NORMATIVE_RULES.keys():
+                    if k in v_type or k in r_id:
+                        parsed["rule_id"] = k
+                        break
+
             return parsed
         except Exception as e:
             print(f"[QwenDetector] Ошибка выполнения Qwen2-VL: {e}")
@@ -462,7 +478,7 @@ class CashDisciplineDetector:
             # 2. Неизвестное тестовое видео (например, от жюри на скрытом тесте):
             # Запускаем глубокий мультимодальный анализ Qwen2-VL (1 FPS, без склейки кадров!)
             qwen_res = self.analyze_video_with_qwen(frames_1fps)
-            if qwen_res and qwen_res.get("verdict") == "violation":
+            if qwen_res and (qwen_res.get("verdict") == "violation" or (qwen_res.get("rule_id") and str(qwen_res.get("rule_id")).lower() not in ["null", "none", "no_violation"])):
                 r_id = qwen_res.get("rule_id") or "unattended_cash"
                 rule = get_rule_info(r_id)
                 ts = float(qwen_res.get("timecode_sec") or 2.0)
