@@ -1,0 +1,42 @@
+OK  X-1   gt=[22] pred=[('food_drink', 21.52, 0.76)] terr=[0.5] 21.9s
+MISS X-2   gt=[10] pred=[] terr=[] 3.8s
+OK  X-3   gt=[] pred=[] terr=[] 4.2s
+OK  X-4   gt=[57, 68] pred=[('prev_client_cash', 56.34, 0.87)] terr=[0.7, 11.7] 14.8s
+OK  X-5   gt=[] pred=[] terr=[] 15.9s
+OK  X-8   gt=[] pred=[] terr=[] 8.7s
+OK  X-10  gt=[] pred=[] terr=[] 3.7s
+OK  X-11  gt=[18] pred=[('pc_unlocked', 20.36, 0.925)] terr=[2.4] 7.2s
+OK  X-12  gt=[] pred=[] terr=[] 11.5s
+MISS X-13  gt=[47] pred=[] terr=[] 17.1s
+OK  X-14  gt=[] pred=[] terr=[] 36.1s
+OK  X-15  gt=[15] pred=[('cash_unattended', 13.56, 0.667)] terr=[1.4] 5.8s
+OK  X-16  gt=[] pred=[] terr=[] 6.2s
+OK  X-17  gt=[7] pred=[('bag_no_check', 7.47, 0.775)] terr=[0.5] 4.9s
+OK  X-18  gt=[20] pred=[('second_visitor', 19.07, 0.8)] terr=[0.9] 7.1s
+OK  X-19  gt=[] pred=[] terr=[] 16.1s
+OK  X-20  gt=[5] pred=[('safe_open', 6.4, 0.991)] terr=[1.4] 4.3s
+OK  X-21  gt=[] pred=[] terr=[] 6.4s
+MISS X-22  gt=[14] pred=[] terr=[] 7.1s
+OK  X-23  gt=[] pred=[] terr=[] 6.0s
+OK  X-24  gt=[8] pred=[('cash_unattended', 9.07, 0.736)] terr=[1.1] 4.8s
+OK  X-25  gt=[] pred=[] terr=[] 9.4s
+OK  X-26  gt=[9] pred=[('cash_unattended', 13.56, 0.698)] terr=[4.6] 6.1s
+OK  X-27  gt=[] pred=[] terr=[] 8.0s
+OK  X-28  gt=[7] pred=[('pc_unlocked', 11.29, 0.828)] terr=[4.3] 4.7s
+OK  X-29  gt=[] pred=[] terr=[] 5.4s
+OK  X-30  gt=[13] pred=[('door_open', 2.34, 0.625), ('outsider', 12.64, 0.6)] terr=[0.4] 4.7s
+OK  X-31  gt=[] pred=[] terr=[] 7.1s
+OK  X-32  gt=[5] pred=[('door_open', 3.04, 0.773)] terr=[2.0] 6.5s
+OK  X-33  gt=[6] pred=[('door_open', 2.93, 0.85), ('outsider', 10.4, 0.6)] terr=[3.1] 5.3s
+MISS X-34  gt=[13] pred=[] terr=[] 6.8s
+OK  X-35  gt=[] pred=[] terr=[] 15.4s
+OK  X-37  gt=[] pred=[] terr=[] 5.8s
+OK  X-38  gt=[33] pred=[('prev_client_cash', 30.83, 0.9), ('prev_client_cash', 57.23, 0.863)] terr=[2.2] 18.6s
+OK  X-39  gt=[] pred=[] terr=[] 23.2s
+OK  X-40  gt=[17] pred=[('personal_items', 14.99, 0.724)] terr=[2.0] 8.3s
+OK  X-43  gt=[] pred=[] terr=[] 7.2s
+MISS X-44  gt=[16] pred=[] terr=[] 5.6s
+OK  X-45  gt=[] pred=[] terr=[] 9.8s
+OK  X-46  gt=[11] pred=[('food_drink', 12.41, 0.757)] terr=[1.4] 6.6s
+
+verdict acc 35/40  TP=16 FN=5 FP=0 TN=19  median terr=1.4399999999999995  within3s=13/17
